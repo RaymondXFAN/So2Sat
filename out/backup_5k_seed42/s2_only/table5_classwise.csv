@@ -1,0 +1,18 @@
+class_id,class_name,test_samples,accuracy
+0,Compact high-rise,266,13.91%
+1,Compact mid-rise,1262,52.30%
+2,Compact low-rise,2465,46.09%
+3,Open high-rise,857,47.14%
+4,Open mid-rise,763,49.93%
+5,Open low-rise,1936,43.08%
+6,Lightweight low-rise,503,5.57%
+7,Large low-rise,3496,76.86%
+8,Sparsely built,2013,28.12%
+9,Heavy industry,908,21.59%
+10,Dense trees,2368,79.27%
+11,Scattered trees,433,31.64%
+12,Bush/scrub,1166,3.43%
+13,Low plants,2435,81.85%
+14,Bare rock/paved,205,7.32%
+15,Bare soil/sand,572,43.36%
+16,Water,2540,99.06%

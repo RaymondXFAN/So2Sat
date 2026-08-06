@@ -1,0 +1,9 @@
+Ada-MBA gate weights (cross-attention pairs):
+0-1 (S2(光谱)↔S1(SAR)): 0.0055
+0-2 (S2(光谱)↔STMN(纹理)): 0.5700
+1-2 (S1(SAR)↔STMN(纹理)): 0.2719
+mean_gate: 0.2825
+interpretation: Ada-MBA cross-attention gate weights for 3-branch fusion
+  α=0: only original features used (cross-attention ignored)
+  α=0.5: equal blend of cross-attention and original features
+  α=1: only cross-attention output used (original features ignored)

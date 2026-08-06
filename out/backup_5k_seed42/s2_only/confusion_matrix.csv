@@ -1,0 +1,18 @@
+true,Compact high-rise,Compact mid-rise,Compact low-rise,Open high-rise,Open mid-rise,Open low-rise,Lightweight low-rise,Large low-rise,Sparsely built,Heavy industry,Dense trees,Scattered trees,Bush/scrub,Low plants,Bare rock/paved,Bare soil/sand,Water
+Compact high-rise,37,66,29,69,23,0,0,23,0,18,0,0,0,1,0,0,0
+Compact mid-rise,45,660,187,16,183,10,6,73,2,74,0,0,0,6,0,0,0
+Compact low-rise,26,471,1136,3,178,481,28,47,9,29,6,1,0,43,0,7,0
+Open high-rise,34,50,10,404,226,41,0,25,0,62,0,0,0,4,0,0,1
+Open mid-rise,17,22,64,33,381,195,0,9,5,35,0,1,0,1,0,0,0
+Open low-rise,0,45,427,4,272,834,0,17,100,0,4,3,54,173,0,1,2
+Lightweight low-rise,0,74,324,0,1,5,28,48,0,11,0,0,0,11,0,1,0
+Large low-rise,20,106,147,54,47,75,9,2687,10,233,0,1,4,84,0,18,1
+Sparsely built,0,2,108,2,16,854,0,7,566,2,16,165,38,187,0,50,0
+Heavy industry,6,66,41,34,25,43,6,414,12,196,0,0,2,56,0,5,2
+Dense trees,0,0,0,0,0,59,0,0,56,1,1877,139,91,142,1,2,0
+Scattered trees,0,0,2,2,0,23,0,0,38,0,26,137,32,120,0,53,0
+Bush/scrub,0,0,0,0,0,2,0,1,0,3,1,13,40,777,2,320,7
+Low plants,0,2,5,10,1,112,0,4,45,26,11,44,8,1993,4,161,9
+Bare rock/paved,3,5,2,2,0,0,11,79,0,58,0,0,0,8,15,22,0
+Bare soil/sand,0,9,1,0,0,7,0,13,2,21,0,0,1,268,0,248,2
+Water,2,0,0,0,0,0,0,1,0,2,5,0,0,10,0,4,2516
