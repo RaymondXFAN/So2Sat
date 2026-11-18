@@ -1,8 +1,9 @@
 # code/datasets.py
 # So2Sat LCZ42 PyTorch Dataset + DataLoader
-# ★ 论文版: 支持两种数据加载方式
+# ★ 论文版: 支持三种数据加载方式
 #   1. .pt文件（子集模式，快速测试）
-#   2. h5直接读取（完整数据集，论文正式实验）
+#   2. h5直接读取（完整数据集，有.h5文件时）
+#   3. h5.gz读取（★ 磁盘不够时，用indexed_gzip直接从压缩文件读取！）
 # ★ h5方式: 预处理只算stats.json，训练时从h5按需读取+实时归一化
 import json
 import numpy as np
@@ -38,6 +39,7 @@ class So2SatDatasetH5(Dataset):
     预处理只需计算stats.json（几分钟），不需要创建巨大.pt文件。
     训练时从h5按需读取指定索引的样本，归一化后返回tensor。
     内存占用极小（只有stats + h5文件句柄），适合320K+样本。
+    ★★ 新增: 支持h5.gz文件（磁盘不够解压时，用indexed_gzip直接读取压缩文件）
     """
     def __init__(self, h5_path, stats_path):
         import h5py
@@ -54,14 +56,53 @@ class So2SatDatasetH5(Dataset):
 
         # ★ 惰性打开h5文件（支持DataLoader多worker）
         self._h5 = None
+        _gz_file = None  # ★ indexed_gzip文件句柄（如果用.gz模式）
+        self._gz_file = _gz_file
         self._labels = None
         self._n = None
 
     def _open_h5(self):
-        """★ 惰性打开：每个DataLoader worker首次访问时打开自己的h5句柄"""
+        """★ 惰性打开：每个DataLoader worker首次访问时打开自己的h5句柄
+        ★★ 自动检测.h5 vs .h5.gz：优先用.h5，如果不存在则用indexed_gzip读.gz
+        """
         if self._h5 is None:
             import h5py
-            self._h5 = h5py.File(self.h5_path, 'r', libver='latest', swmr=True)
+            h5_path = Path(self.h5_path)
+
+            if h5_path.exists():
+                # ★ 标准模式：直接打开.h5文件
+                self._h5 = h5py.File(str(h5_path), 'r', libver='latest', swmr=True)
+            elif h5_path.with_suffix('.h5.gz').exists():
+                # ★★★ .gz模式：用indexed_gzip直接从压缩文件读取！
+                # 不需要解压！省50GB磁盘空间！
+                import indexed_gzip
+                gz_path = str(h5_path.with_suffix('.h5.gz'))
+                print(f"  ★ So2SatDatasetH5: 使用indexed_gzip读取 {gz_path}")
+                print(f"    （无需解压，直接从.gz读取）")
+                self._gz_file = indexed_gzip.IndexedGzipFile(
+                    filename=gz_path,
+                    spacing=4194304,  # 4MB间距，索引大小合理
+                )
+                # ★ 建立完整索引（需要遍历整个.gz文件一次，约7分钟）
+                # 索引缓存在内存中，后续读取极快
+                print(f"    ★ 建立gzip索引（首次较慢，约5-10分钟）...")
+                CHUNK = 50 * 1024 * 1024
+                total = 0
+                while True:
+                    data = self._gz_file.read(CHUNK)
+                    if not data:
+                        break
+                    total += len(data)
+                self._gz_file.seek(0)
+                print(f"    ✓ 索引建立完成 ({total/(1024**3):.1f}GB)")
+
+                # 用h5py打开gzip文件句柄
+                self._h5 = h5py.File(self._gz_file, 'r')
+            else:
+                raise FileNotFoundError(
+                    f"找不到数据文件！需要 {h5_path} 或 {h5_path.with_suffix('.h5.gz')}"
+                )
+
             # ★ 一次性读取所有labels（极小，~6MB）→ 避免每次__getitem__都读
             label_raw = np.array(self._h5['label'])
             if label_raw.ndim > 1:
@@ -102,19 +143,21 @@ class So2SatDatasetH5(Dataset):
     def __del__(self):
         if self._h5 is not None:
             self._h5.close()
+        if self._gz_file is not None:
+            self._gz_file.close()
 
 
 def make_loader(data_source, batch_size=None, shuffle=False, stats_path=None):
-    """★ 统一创建DataLoader，自动选择.pt或h5模式
+    """★ 统一创建DataLoader，自动选择.pt或h5或h5.gz模式
 
-    data_source: .pt文件路径（子集模式）或 h5文件路径（完整数据集模式）
+    data_source: .pt文件路径（子集模式）或 h5/h5.gz文件路径（完整数据集模式）
     stats_path:  stats.json路径（仅h5模式需要）
     """
     bs = batch_size or CFG["batch_size"]
     num_workers = 4 if CFG["device"] == "cuda" else 0
 
     if FULL_DATA and stats_path:
-        # ★ 完整数据集模式：从h5直接读取
+        # ★ 完整数据集模式：从h5/h5.gz直接读取
         dataset = So2SatDatasetH5(data_source, stats_path)
     else:
         # ★ 子集模式：从.pt文件加载

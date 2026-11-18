@@ -1,0 +1,12 @@
+data/
+out/
+results/
+*.h5
+*.h5.gz
+*.pt
+*.pth
+*.ckpt
+*.log
+__pycache__/
+*.pyc
+.DS_Store

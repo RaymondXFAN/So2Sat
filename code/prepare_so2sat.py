@@ -45,47 +45,88 @@ def check_memory():
 
 # ── ★★★ 完整数据集模式：只计算归一化统计量 ──
 
+def _open_h5_file(h5_path):
+    """★ 智能打开h5文件：优先.h5，如果不存在则用indexed_gzip读.h5.gz
+    返回 (h5_file_handle, gz_file_handle_or_None)
+    调用者负责关闭h5_handle（gz_handle会被h5py内部管理）
+    """
+    import h5py
+    h5_path = Path(str(h5_path))
+
+    if h5_path.exists():
+        # 标准模式
+        return h5py.File(str(h5_path), 'r'), None
+    elif h5_path.with_suffix('.h5.gz').exists():
+        # ★ indexed_gzip模式：直接从压缩文件读取！
+        import indexed_gzip
+        gz_path = str(h5_path.with_suffix('.h5.gz'))
+        print(f"  ★ 使用indexed_gzip读取 {gz_path}（无需解压）")
+        gz_file = indexed_gzip.IndexedGzipFile(
+            filename=gz_path,
+            spacing=4194304,  # 4MB间距
+        )
+        # 建立完整索引
+        print(f"    ★ 建立gzip索引（约5-10分钟）...")
+        CHUNK = 50 * 1024 * 1024
+        total = 0
+        while True:
+            data = gz_file.read(CHUNK)
+            if not data:
+                break
+            total += len(data)
+        gz_file.seek(0)
+        print(f"    ✓ 索引建立完成 ({total/(1024**3):.1f}GB)")
+        h5_file = h5py.File(gz_file, 'r')
+        return h5_file, gz_file
+    else:
+        raise FileNotFoundError(f"找不到 {h5_path} 或 {h5_path.with_suffix('.h5.gz')}")
+
+
 def compute_stats_from_h5_chunked(h5_path, chunk_size=50000):
     """★ 从h5文件分块计算归一化统计量（mean/std）
     不需要加载全部数据到内存！分块读取，逐块累加统计量。
     内存峰值: ~4GB（每块50K样本），适合任何AutoDL配置。
+    ★★ 支持.h5.gz文件（用indexed_gzip直接读取，无需解压！）
     """
-    import h5py
     print(f"  ★ 分块计算归一化统计量: {h5_path}")
     print(f"    块大小: {chunk_size} 样本/块")
 
-    with h5py.File(str(h5_path), 'r') as f:
-        n_total = f['sen2'].shape[0]
-        print(f"    总样本数: {n_total}")
+    f, gz_handle = _open_h5_file(h5_path)
+    n_total = f['sen2'].shape[0]
+    print(f"    总样本数: {n_total}")
 
-        # 累加器（用float64避免精度损失）
-        s2_sum = np.zeros(10, dtype=np.float64)
-        s2_sq_sum = np.zeros(10, dtype=np.float64)
-        s1_sum = np.zeros(8, dtype=np.float64)
-        s1_sq_sum = np.zeros(8, dtype=np.float64)
-        n_pixels = 0
+    # 累加器（用float64避免精度损失）
+    s2_sum = np.zeros(10, dtype=np.float64)
+    s2_sq_sum = np.zeros(10, dtype=np.float64)
+    s1_sum = np.zeros(8, dtype=np.float64)
+    s1_sq_sum = np.zeros(8, dtype=np.float64)
+    n_pixels = 0
 
-        for start in range(0, n_total, chunk_size):
-            end = min(start + chunk_size, n_total)
-            print(f"    处理块 {start}-{end} ({end/n_total*100:.1f}%)...")
+    for start in range(0, n_total, chunk_size):
+        end = min(start + chunk_size, n_total)
+        print(f"    处理块 {start}-{end} ({end/n_total*100:.1f}%)...")
 
-            chunk_s2 = np.array(f['sen2'][start:end], dtype=np.float32)  # (chunk, 32, 32, 10)
-            chunk_s1 = np.array(f['sen1'][start:end], dtype=np.float32)  # (chunk, 32, 32, 8)
+        chunk_s2 = np.array(f['sen2'][start:end], dtype=np.float32)  # (chunk, 32, 32, 10)
+        chunk_s1 = np.array(f['sen1'][start:end], dtype=np.float32)  # (chunk, 32, 32, 8)
 
-            # ★ 每个通道的 sum 和 sum_of_squares（跨所有像素）
-            s2_sum += chunk_s2.reshape(-1, 10).sum(axis=0)
-            s2_sq_sum += (chunk_s2.reshape(-1, 10) ** 2).sum(axis=0)
-            s1_sum += chunk_s1.reshape(-1, 8).sum(axis=0)
-            s1_sq_sum += (chunk_s1.reshape(-1, 8) ** 2).sum(axis=0)
-            n_pixels += (end - start) * 32 * 32
+        # ★ 每个通道的 sum 和 sum_of_squares（跨所有像素）
+        s2_sum += chunk_s2.reshape(-1, 10).sum(axis=0)
+        s2_sq_sum += (chunk_s2.reshape(-1, 10) ** 2).sum(axis=0)
+        s1_sum += chunk_s1.reshape(-1, 8).sum(axis=0)
+        s1_sq_sum += (chunk_s1.reshape(-1, 8) ** 2).sum(axis=0)
+        n_pixels += (end - start) * 32 * 32
 
-            del chunk_s2, chunk_s1  # 释放块内存
+        del chunk_s2, chunk_s1  # 释放块内存
 
-        # 计算mean和std
-        s2_mean = (s2_sum / n_pixels).astype(np.float32)
-        s2_std = (np.sqrt(s2_sq_sum / n_pixels - (s2_mean.astype(np.float64)) ** 2) + 1e-8).astype(np.float32)
-        s1_mean = (s1_sum / n_pixels).astype(np.float32)
-        s1_std = (np.sqrt(s1_sq_sum / n_pixels - (s1_mean.astype(np.float64)) ** 2) + 1e-8).astype(np.float32)
+    # 计算mean和std
+    s2_mean = (s2_sum / n_pixels).astype(np.float32)
+    s2_std = (np.sqrt(s2_sq_sum / n_pixels - (s2_mean.astype(np.float64)) ** 2) + 1e-8).astype(np.float32)
+    s1_mean = (s1_sum / n_pixels).astype(np.float32)
+    s1_std = (np.sqrt(s1_sq_sum / n_pixels - (s1_mean.astype(np.float64)) ** 2) + 1e-8).astype(np.float32)
+
+    f.close()
+    if gz_handle is not None:
+        gz_handle.close()
 
     print(f"    ✓ S2 mean: {s2_mean[:3].round(3)}, std: {s2_std[:3].round(3)}")
     print(f"    ✓ S1 mean: {s1_mean[:3].round(3)}, std: {s1_std[:3].round(3)}")
@@ -131,15 +172,19 @@ def prepare_full_data():
             print(f"\n⚠️ stats.json 存在但不是完整数据集版（子集模式）")
             print(f"  需要重新计算完整数据集统计量")
 
-    # 检查h5文件
+    # 检查h5文件（支持.h5和.h5.gz）
     train_h5 = RAW / "training.h5"
     val_h5 = RAW / "validation.h5"
     test_h5 = RAW / "testing.h5"
+    # ★ .gz备选路径
+    train_gz = RAW / "training.h5.gz"
+    val_gz = RAW / "validation.h5.gz"
+    test_gz = RAW / "testing.h5.gz"
 
-    if not train_h5.exists():
-        print(f"\n✗ {train_h5} 不存在！")
+    train_available = train_h5.exists() or train_gz.exists()
+    if not train_available:
+        print(f"\n✗ 训练集不存在！需要 {train_h5} 或 {train_gz}")
         print("  需要先下载h5文件。请参考README中的数据下载说明。")
-        print("  或运行: python code/prepare_so2sat.py（会自动尝试HF下载）")
         return
 
     # 计算训练集归一化统计量（分块，内存安全）
@@ -148,15 +193,23 @@ def prepare_full_data():
 
     # 验证h5文件完整性
     print(f"\n── Step 2: 验证验证集和测试集h5文件 ──")
-    import h5py
-    for h5_file, name in [(val_h5, "validation"), (test_h5, "testing")]:
+    for h5_file, gz_file, name in [(val_h5, val_gz, "validation"), (test_h5, test_gz, "testing")]:
         if h5_file.exists():
+            import h5py
             with h5py.File(str(h5_file), 'r') as f:
                 n = f['sen2'].shape[0]
-                print(f"  ✓ {name}: {n} 样本")
+                print(f"  ✓ {name}: {n} 样本 (.h5)")
                 stats[f"n_{name}"] = n
+        elif gz_file.exists():
+            f_h5, gz_h = _open_h5_file(h5_file)
+            n = f_h5['sen2'].shape[0]
+            print(f"  ✓ {name}: {n} 样本 (.h5.gz)")
+            stats[f"n_{name}"] = n
+            f_h5.close()
+            if gz_h is not None:
+                gz_h.close()
         else:
-            print(f"  ✗ {name}: {h5_file} 不存在！")
+            print(f"  ✗ {name}: 不存在！需要 {h5_file} 或 {gz_file}")
             return
 
     # 保存stats.json

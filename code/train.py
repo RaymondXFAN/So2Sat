@@ -12,6 +12,7 @@ import argparse
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader, Subset
 from pathlib import Path
 import sys; sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import CFG, DATA, OUT, ROOT, RAW, LCZ_NAMES, FULL_DATA
@@ -332,15 +333,28 @@ def main():
                         help="实验模式: full/s2_only/s1_only/concat/no_stmn/no_ada/no_gate")
     parser.add_argument("--seed", type=int, default=None,
                         help="随机种子（覆盖config默认值42），用于多seed实验")
+    parser.add_argument("--epochs", type=int, default=None,
+                        help="训练轮数（覆盖config默认值30），用于快速验证或调试")
+    parser.add_argument("--n_train", type=int, default=None,
+                        help="★ 子集实验: 限制训练样本数（如5000用于5K子集实验）")
     args = parser.parse_args()
     mode = args.mode
     seed = args.seed if args.seed is not None else CFG["seed"]
+    if args.epochs is not None:
+        CFG["epochs"] = args.epochs
+    n_train_limit = args.n_train
 
-    # ── ★ 输出目录（含seed） ──
-    if seed == CFG["seed"]:
-        mode_out = OUT / mode             # 默认seed=42: out/full/
+    # ── ★ 输出目录（含seed + 子集标记） ──
+    subset_tag = f"_5k" if n_train_limit is not None and n_train_limit <= 5000 else ""
+    if seed == CFG["seed"] and not subset_tag:
+        mode_out = OUT / mode             # 默认seed=42, 完整数据: out/no_stmn/
     else:
-        mode_out = OUT / f"{mode}_seed{seed}"  # 其他seed: out/full_seed123/
+        parts = [mode]
+        if subset_tag:
+            parts.append(subset_tag.lstrip("_"))
+        if seed != CFG["seed"]:
+            parts.append(f"seed{seed}")
+        mode_out = OUT / "_".join(parts)   # 如: out/no_stmn_5k_seed123/
     mode_out.mkdir(parents=True, exist_ok=True)
 
     # ── 打印实验配置 ──
@@ -385,7 +399,7 @@ def main():
 
     # ── ★ 加载数据（自动选择h5或.pt模式） ──
     if FULL_DATA:
-        # ★ 完整数据集: 从h5直接读取
+        # ★ 完整数据集: 从h5直接读取（支持.h5和.h5.gz）
         stats_path = DATA / "stats.json"
         train_h5 = RAW / "training.h5"
         val_h5   = RAW / "validation.h5"
@@ -394,15 +408,30 @@ def main():
         if not stats_path.exists():
             print(f"\n✗ {stats_path} 不存在！请先运行 prepare_so2sat.py")
             return
-        if not train_h5.exists():
-            print(f"\n✗ {train_h5} 不存在！请先下载h5文件")
+        # ★ 支持.h5.gz（磁盘不够解压时，用indexed_gzip直接读取压缩文件）
+        train_available = train_h5.exists() or train_h5.with_suffix('.h5.gz').exists()
+        if not train_available:
+            print(f"\n✗ 训练集不存在！需要 {train_h5} 或 {train_h5.with_suffix('.h5.gz')}")
             return
 
         tr_loader = make_loader(train_h5, shuffle=True, stats_path=stats_path)
         va_loader = make_loader(val_h5,   shuffle=False, stats_path=stats_path)
         te_loader = make_loader(test_h5,  shuffle=False, stats_path=stats_path)
 
-        print(f"  ★ h5数据加载: train≈320K, val≈82K, test≈82K")
+        # ★ 子集实验: 限制训练样本数
+        if n_train_limit is not None and n_train_limit < len(tr_loader.dataset):
+            np.random.seed(seed)
+            subset_idx = np.random.choice(len(tr_loader.dataset), n_train_limit, replace=False)
+            subset_idx = sorted(subset_idx)
+            tr_loader = DataLoader(
+                Subset(tr_loader.dataset, subset_idx),
+                batch_size=CFG["batch_size"], shuffle=True,
+                num_workers=4 if device == "cuda" else 0,
+                drop_last=False, pin_memory=device == "cuda",
+            )
+            print(f"  ★ 5K子集模式: 训练样本限制为 {n_train_limit}")
+        else:
+            print(f"  ★ h5数据加载: train≈320K, val≈82K, test≈82K")
     else:
         # ★ 子集模式: 从.pt文件加载
         train_pt = DATA / "train.pt"
